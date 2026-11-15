@@ -1,0 +1,87 @@
+name: Upstream pg-gateway
+
+# pg-gateway publishes to npm, not to this repo. This workflow polls that
+# package (and the upstream git commit recorded on it) and, when either
+# changes, bumps the pin and publishes a new image in the same job.
+# A push made with GITHUB_TOKEN does not retrigger the Docker workflow,
+# so the image build lives here on purpose.
+
+on:
+  schedule:
+    - cron: "20 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  bump-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Compare with published pg-gateway
+        id: upstream
+        run: |
+          set -euo pipefail
+          current=$(node -p "require('./package.json').dependencies['pg-gateway']")
+          latest=$(npm view pg-gateway version)
+          git_head=$(npm view pg-gateway gitHead)
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "git_head=$git_head" >> "$GITHUB_OUTPUT"
+          recorded=$(cat .pg-gateway-githead 2>/dev/null || true)
+          echo "recorded=$recorded" >> "$GITHUB_OUTPUT"
+          if [ "$current" != "$latest" ] || [ "$recorded" != "$git_head" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bump pin
+        if: steps.upstream.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          npm install "pg-gateway@${{ steps.upstream.outputs.latest }}" --save-exact
+          printf '%s\n' "${{ steps.upstream.outputs.git_head }}" > .pg-gateway-githead
+          npm test
+          npm run typecheck
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json .pg-gateway-githead
+          git commit -m "chore: bump pg-gateway to ${{ steps.upstream.outputs.latest }} (${{ steps.upstream.outputs.git_head }})"
+          git push
+
+      - uses: docker/setup-qemu-action@v3
+        if: steps.upstream.outputs.changed == 'true'
+      - uses: docker/setup-buildx-action@v3
+        if: steps.upstream.outputs.changed == 'true'
+      - uses: docker/login-action@v3
+        if: steps.upstream.outputs.changed == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        if: steps.upstream.outputs.changed == 'true'
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest
+            type=sha
+      - uses: docker/build-push-action@v6
+        if: steps.upstream.outputs.changed == 'true'
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
