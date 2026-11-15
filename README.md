@@ -19,7 +19,7 @@ You run the image GitHub Actions publishes to GHCR. You do not need the source o
 | Registry | `ghcr.io` |
 | Image | `ghcr.io/scottcandy34/pg-gateway-proxy` |
 | Platforms | `linux/amd64`, `linux/arm64` |
-| Tags | `latest` on the default branch, the git sha, and semver (`v1.2.3`, `1.2`) |
+| Tags | `v0.1.0` (this release), `0.1.0`, the `v0.1` line, and `latest` |
 
 That name comes from the GitHub repo [scottcandy34/pg-gateway-proxy](https://github.com/scottcandy34/pg-gateway-proxy). GHCR wants the owner and repo in lowercase. The workflow lowercases them for you.
 
@@ -35,14 +35,26 @@ docker login ghcr.io -u scottcandy34
 After that:
 
 ```bash
-docker pull ghcr.io/scottcandy34/pg-gateway-proxy:latest
-```
-
-Pin a tag when you do not want `latest` to move:
-
-```bash
 docker pull ghcr.io/scottcandy34/pg-gateway-proxy:v0.1.0
 ```
+
+`latest` moves when a newer version is published. `v0.1.0` does not. Pin the version.
+
+## Versions
+
+The image version is the `version` in [package.json](package.json). This release is **v0.1.0**. Major stays `0` until a breaking change.
+
+A push to `main` publishes `v<version>` only when that version has not already been published from another commit. The next change has to bump it first, or the Docker build stops:
+
+```bash
+npm version patch    # v0.1.0 -> v0.1.1
+# or
+npm version minor    # v0.1.0 -> v0.2.0
+```
+
+Commit the version bump and push `main`. The workflow builds `v0.1.1` (and moves `latest` and `v0.1`). It does not overwrite `v0.1.0`.
+
+When [pg-gateway](https://github.com/supabase-community/pg-gateway) publishes a new npm release, [`.github/workflows/upstream.yml`](.github/workflows/upstream.yml) bumps this project's patch version and publishes that new image the same way.
 
 ## Container configuration
 
@@ -83,7 +95,7 @@ An empty `./config` mount is enough. The container writes `config.yml` and, beca
 
 ## Run the published image
 
-[`docker-compose.yml`](docker-compose.yml) already points at `ghcr.io/scottcandy34/pg-gateway-proxy:latest`. Then:
+[`docker-compose.yml`](docker-compose.yml) already points at `ghcr.io/scottcandy34/pg-gateway-proxy:v0.1.0`. Then:
 
 ```bash
 docker compose up -d
@@ -106,7 +118,7 @@ docker run -d \
   -e CONFIG_PATH=/config/config.yml \
   -e LOG_LEVEL=info \
   -v "$PWD/config:/config" \
-  ghcr.io/scottcandy34/pg-gateway-proxy:latest
+  ghcr.io/scottcandy34/pg-gateway-proxy:v0.1.0
 ```
 
 Watch the first start:
@@ -123,7 +135,7 @@ A named volume works too if you do not want the file on the host. You then copy 
 docker volume create pg-gateway-config
 docker run -d --name pg-gateway-proxy --restart unless-stopped \
   -p 5432:5432 -v pg-gateway-config:/config \
-  ghcr.io/scottcandy34/pg-gateway-proxy:latest
+  ghcr.io/scottcandy34/pg-gateway-proxy:v0.1.0
 docker cp pg-gateway-proxy:/config/config.yml ./config.yml
 # edit config.yml
 docker cp ./config.yml pg-gateway-proxy:/config/config.yml
@@ -213,14 +225,15 @@ User and password in the client are the backend's user and password. From anothe
 
 [`.github/workflows/test.yml`](.github/workflows/test.yml) runs the tests and the typecheck on every push and pull request. It does not push an image.
 
-[`.github/workflows/docker.yml`](.github/workflows/docker.yml) pushes the image. Pull requests do not push.
+[`.github/workflows/docker.yml`](.github/workflows/docker.yml) publishes `v<package.json version>` on every push to `main`. It refuses the push when that version tag already belongs to another commit.
 
 [`.github/workflows/upstream.yml`](.github/workflows/upstream.yml) runs every six hours and on demand. It compares the pinned `pg-gateway` version and git commit with what npm currently publishes. If either changed it:
 
 1. installs that version,
-2. runs the tests,
-3. commits the bump,
-4. builds and pushes the image in that same job.
+2. bumps this project's patch version (`v0.1.0` becomes `v0.1.1`),
+3. runs the tests,
+4. commits the bump and tags it,
+5. builds and pushes that new image version in the same job.
 
 The image build is in this workflow on purpose. A commit made with the default `GITHUB_TOKEN` does not start the other Docker workflow.
 

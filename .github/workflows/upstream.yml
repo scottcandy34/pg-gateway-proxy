@@ -2,7 +2,7 @@ name: Upstream pg-gateway
 
 # pg-gateway publishes to npm, not to this repo. This workflow polls that
 # package (and the upstream git commit recorded on it) and, when either
-# changes, bumps the pin and publishes a new image in the same job.
+# changes, bumps this proxy's patch version and publishes that new image.
 # A push made with GITHUB_TOKEN does not retrigger the Docker workflow,
 # so the image build lives here on purpose.
 
@@ -20,6 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -43,19 +45,25 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Bump pin
+      - name: Bump pin and release a new version
+        id: bump
         if: steps.upstream.outputs.changed == 'true'
         run: |
           set -euo pipefail
           npm install "pg-gateway@${{ steps.upstream.outputs.latest }}" --save-exact
           printf '%s\n' "${{ steps.upstream.outputs.git_head }}" > .pg-gateway-githead
+          npm version patch --no-git-tag-version
+          version=$(node -p "require('./package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "minor=${version%.*}" >> "$GITHUB_OUTPUT"
           npm test
           npm run typecheck
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json .pg-gateway-githead
-          git commit -m "chore: bump pg-gateway to ${{ steps.upstream.outputs.latest }} (${{ steps.upstream.outputs.git_head }})"
-          git push
+          git commit -m "chore: release v${version} (pg-gateway ${{ steps.upstream.outputs.latest }})"
+          git tag -a "v${version}" -m "pg-gateway-proxy v${version}"
+          git push origin HEAD "v${version}"
 
       - uses: docker/setup-qemu-action@v3
         if: steps.upstream.outputs.changed == 'true'
@@ -73,8 +81,14 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
+            type=raw,value=v${{ steps.bump.outputs.version }}
+            type=raw,value=${{ steps.bump.outputs.version }}
+            type=raw,value=v${{ steps.bump.outputs.minor }}
+            type=raw,value=${{ steps.bump.outputs.minor }}
             type=raw,value=latest
-            type=sha
+          labels: |
+            org.opencontainers.image.version=${{ steps.bump.outputs.version }}
+            org.opencontainers.image.title=pg-gateway-proxy
       - uses: docker/build-push-action@v6
         if: steps.upstream.outputs.changed == 'true'
         with:

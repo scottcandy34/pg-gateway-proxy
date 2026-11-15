@@ -4,7 +4,7 @@
 # and the process has to listen on 0.0.0.0 inside the container.
 services:
   pg-gateway-proxy:
-    image: ghcr.io/scottcandy34/pg-gateway-proxy:latest
+    image: ghcr.io/scottcandy34/pg-gateway-proxy:v0.1.0
     restart: unless-stopped
     ports:
       - "5432:5432"
