@@ -1,0 +1,23 @@
+# Pulls the image built by GitHub Actions and pushed to GHCR.
+# https://github.com/scottcandy34/pg-gateway-proxy
+# Do not set bind to 127.0.0.1 in the config: Docker publishes the container port,
+# and the process has to listen on 0.0.0.0 inside the container.
+services:
+  pg-gateway-proxy:
+    image: ghcr.io/scottcandy34/pg-gateway-proxy:latest
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      CONFIG_PATH: /config/config.yml
+      LOG_LEVEL: info
+      # BIND: 0.0.0.0:5432
+      # HEALTHCHECK_URL: http://127.0.0.1:8081/health
+    volumes:
+      - ./config:/config
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch(process.env.HEALTHCHECK_URL || 'http://127.0.0.1:8081/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s

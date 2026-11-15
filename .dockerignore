@@ -1,0 +1,11 @@
+node_modules
+dist
+test
+docs
+.git
+.github
+*.log
+config/certs
+README.md
+config.yml
+.env
