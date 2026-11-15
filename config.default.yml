@@ -1,0 +1,97 @@
+# pg-gateway-proxy
+#
+# One listen port. Clients connect with a hostname (SNI). The proxy forwards
+# that connection to the matching PostgreSQL server. Same idea as Gate Lite.
+#
+# Routing uses the TLS server name, not the database name. The startup
+# message (user, database, password) is passed through to the backend.
+# This proxy does not authenticate the user unless you turn on client
+# certificates. Put passwords and pg_hba rules on the backend.
+#
+# A missing file is replaced with this one on startup. Edit the copy in
+# your mounted /config directory. This copy inside the image is only a seed.
+
+bind: 0.0.0.0:5432
+
+log:
+  level: info                 # debug | info | warn | error
+  format: text                # text | json
+  exposeBackendErrors: true   # put the backend failure text in the client error
+
+limits:
+  maxConnections: 2000
+
+timeouts:
+  connect: 5s                 # backend TCP / TLS connect
+  idle: 0s                    # 0 disables the idle timer
+  handshake: 10s              # client TLS + SSLRequest
+
+# Raw IP connections have no hostname. Leave these on to refuse them.
+requireTls: true
+requireSni: true
+blockIpSni: true
+
+# No matching host: "reject", a server name, or host:port.
+unmatched: reject
+
+# Non-TLS clients cannot send SNI, so they can only go to one backend.
+plaintext:
+  enabled: false
+  backend: 127.0.0.1:5432
+
+# auto writes a self-signed cert into <config-dir>/certs the first time
+# key/cert are missing. Use "files" and set key/cert for a real certificate.
+tls:
+  mode: auto
+  # key: /config/certs/server-key.pem
+  # cert: /config/certs/server-cert.pem
+  # ca: /config/certs/ca.pem
+  # passphrase: ""
+  requestCert: false
+  rejectUnauthorized: true
+  allowedCns: []
+  # certificates:
+  #   - serverName: "*.db.example.com"
+  #     key: /config/certs/wildcard.key
+  #     cert: /config/certs/wildcard.crt
+
+# Named backends. A route can point at a name, or at host:port directly.
+servers:
+  # db1: 10.0.1.10:5432
+  # analytics:
+  #   addresses:
+  #     - 10.0.2.10:5432
+  #     - 10.0.2.11:5432
+  #   strategy: round-robin       # first | round-robin | random | least-connections
+  #   tls: false                   # true, false, or a mapping (see docs)
+
+# First match wins. Patterns: exact, *.example.com (one label), **.example.com, *.
+# $1, $2, ${sni} are substituted into address backends.
+routes: []
+  # - name: db1
+  #   host: db1.example.com
+  #   backend: 10.0.1.10:5432
+  #
+  # - name: tenant
+  #   host: "*.db.example.com"
+  #   backend: "$1.postgres.internal:5432"
+  #   tls: false
+  #
+  # - name: analytics
+  #   host:
+  #     - analytics.example.com
+  #     - reports.example.com
+  #   backend:
+  #     - 10.0.2.10:5432
+  #     - 10.0.2.11:5432
+  #   strategy: least-connections
+  #   connectTimeout: 3s
+  #   tls:
+  #     enabled: true
+  #     rejectUnauthorized: true
+  #     servername: analytics.internal
+  #     ca: /config/certs/backend-ca.pem
+
+health:
+  enabled: true
+  bind: 127.0.0.1:8081
