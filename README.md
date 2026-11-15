@@ -19,7 +19,7 @@ You run the image GitHub Actions publishes to GHCR. You do not need the source o
 | Registry | `ghcr.io` |
 | Image | `ghcr.io/scottcandy34/pg-gateway-proxy` |
 | Platforms | `linux/amd64`, `linux/arm64` |
-| Tags | `v0.1.1` (this release), `0.1.1`, the `v0.1` line, and `latest` |
+| Tags | `v0.1.2` (this release), `0.1.2`, the `v0.1` line, and `latest` |
 
 That name comes from the GitHub repo [scottcandy34/pg-gateway-proxy](https://github.com/scottcandy34/pg-gateway-proxy). GHCR wants the owner and repo in lowercase. The workflow lowercases them for you.
 
@@ -35,14 +35,14 @@ docker login ghcr.io -u scottcandy34
 After that:
 
 ```bash
-docker pull ghcr.io/scottcandy34/pg-gateway-proxy:v0.1.1
+docker pull ghcr.io/scottcandy34/pg-gateway-proxy:v0.1.2
 ```
 
-`latest` moves when a newer version is published. `v0.1.1` does not. Pin the version.
+`latest` moves when a newer version is published. `v0.1.2` does not. Pin the version.
 
 ## Versions
 
-The image version is the `version` in [package.json](package.json). This release is **v0.1.1**. Major stays `0` until a breaking change.
+The image version is the `version` in [package.json](package.json). This release is **v0.1.2**. Major stays `0` until a breaking change.
 
 A push to `main` publishes `v<version>` only when that version has not already been published from another commit. The next change has to bump it first, or the Docker build stops:
 
@@ -95,7 +95,7 @@ An empty `./config` mount is enough. The container writes `config.yml` and, beca
 
 ## Run the published image
 
-[`docker-compose.yml`](docker-compose.yml) already points at `ghcr.io/scottcandy34/pg-gateway-proxy:v0.1.1`. Then:
+[`docker-compose.yml`](docker-compose.yml) already points at `ghcr.io/scottcandy34/pg-gateway-proxy:v0.1.2`. Then:
 
 ```bash
 docker compose up -d
@@ -118,7 +118,7 @@ docker run -d \
   -e CONFIG_PATH=/config/config.yml \
   -e LOG_LEVEL=info \
   -v "$PWD/config:/config" \
-  ghcr.io/scottcandy34/pg-gateway-proxy:v0.1.1
+  ghcr.io/scottcandy34/pg-gateway-proxy:v0.1.2
 ```
 
 Watch the first start:
@@ -135,7 +135,7 @@ A named volume works too if you do not want the file on the host. You then copy 
 docker volume create pg-gateway-config
 docker run -d --name pg-gateway-proxy --restart unless-stopped \
   -p 5432:5432 -v pg-gateway-config:/config \
-  ghcr.io/scottcandy34/pg-gateway-proxy:v0.1.1
+  ghcr.io/scottcandy34/pg-gateway-proxy:v0.1.2
 docker cp pg-gateway-proxy:/config/config.yml ./config.yml
 # edit config.yml
 docker cp ./config.yml pg-gateway-proxy:/config/config.yml

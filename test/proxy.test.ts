@@ -109,10 +109,13 @@ describe("proxy", () => {
       cancel.writeInt32BE(80877102, 4);
       await raw(proxy.port, cancel);
       await tlsJunk(proxy.port);
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await sslThenGarbage(proxy.port);
+      await new Promise((resolve) => setTimeout(resolve, 400));
       const health = await fetch(`http://127.0.0.1:${proxy.healthPort}/health`);
       assert.equal(health.status, 200);
-      for (const message of crashes) assert.match(message, /reading 'error'/);
+      for (const message of crashes) {
+        assert.match(message, /reading 'error'|WritableStream is locked|unsupported protocol|wrong version number/i);
+      }
     } finally {
       process.off("uncaughtException", onCrash);
       await proxy.close();
@@ -178,6 +181,27 @@ function raw(port: number, payload: Buffer): Promise<void> {
       socket.once("data", finish);
       socket.once("close", finish);
       setTimeout(finish, 1000);
+    });
+  });
+}
+
+function sslThenGarbage(port: number): Promise<void> {
+  return new Promise((resolve) => {
+    const socket = netConnect({ host: "127.0.0.1", port });
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      socket.destroy();
+      resolve();
+    };
+    socket.on("error", finish);
+    socket.on("connect", () => {
+      socket.write(sslRequest());
+      socket.once("data", () => {
+        socket.write(Buffer.from([0x16, 0x03, 0x00, 0x00, 0x01, 0x00]));
+        setTimeout(finish, 200);
+      });
     });
   });
 }

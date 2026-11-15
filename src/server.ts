@@ -349,9 +349,20 @@ function installStabilityGuard(log: Logger): void {
   const proc = process as NodeJS.Process & { [key: symbol]: boolean };
   if (proc[marker]) return;
   proc[marker] = true;
+
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => {
+    const error = args.find((arg): arg is Error => arg instanceof Error);
+    if (error && isBenignClientError(error)) {
+      log.warn("client connection closed", { error: describeError(error) });
+      return;
+    }
+    originalError.apply(console, args);
+  };
+
   process.on("uncaughtException", (error) => {
-    if (isStreamCloseBug(error)) {
-      log.debug("ignored a Node stream close error after a client disconnected", { error: error.message });
+    if (isBenignClientError(error)) {
+      log.warn("client connection closed", { error: describeError(error) });
       return;
     }
     log.error("fatal", { error: error.stack ?? error.message });
@@ -359,12 +370,34 @@ function installStabilityGuard(log: Logger): void {
   });
   process.on("unhandledRejection", (reason) => {
     const error = reason instanceof Error ? reason : new Error(String(reason));
-    if (isStreamCloseBug(error) || error.message === "Unexpected initial message") {
-      log.warn("client connection failed", { error: error.message });
+    if (isBenignClientError(error)) {
+      log.warn("client connection closed", { error: describeError(error) });
       return;
     }
     log.error("unhandled rejection", { error: error.stack ?? error.message });
   });
+}
+
+function isBenignClientError(error: unknown): boolean {
+  if (isStreamCloseBug(error)) return true;
+  if (!(error instanceof Error)) return false;
+  const code = "code" in error && typeof error.code === "string" ? error.code : "";
+  if (
+    code.startsWith("ERR_SSL_") ||
+    code === "ERR_INVALID_STATE" ||
+    code === "ECONNRESET" ||
+    code === "EPIPE" ||
+    code === "ECONNABORTED" ||
+    code === "ERR_STREAM_PREMATURE_CLOSE"
+  ) {
+    return true;
+  }
+  return /Unexpected initial message|unsupported protocol|WritableStream is locked|wrong version number/i.test(error.message);
+}
+
+function describeError(error: Error): string {
+  const code = "code" in error && typeof error.code === "string" ? error.code : "";
+  return code ? `${code} ${error.message}` : error.message;
 }
 
 function isStreamCloseBug(error: unknown): boolean {

@@ -1,6 +1,6 @@
 {
   "name": "pg-gateway-proxy",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "SNI reverse proxy for PostgreSQL, built on pg-gateway. One port, many hostnames, Gate Lite style.",
   "type": "module",
