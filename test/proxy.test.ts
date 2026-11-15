@@ -93,6 +93,31 @@ describe("proxy", () => {
       await backend.close();
     }
   });
+
+  it("drops junk and cancel requests without exiting", async () => {
+    const crashes: string[] = [];
+    const onCrash = (error: Error) => crashes.push(error.message);
+    process.on("uncaughtException", onCrash);
+    const dir = await mkdtemp(path.join(tmpdir(), "pg-proxy-"));
+    const proxy = await boot(dir, {
+      routes: [{ host: "db.test", backend: "127.0.0.1:1" }],
+    });
+    try {
+      await raw(proxy.port, Buffer.from("GET / HTTP/1.0\r\n\r\n"));
+      const cancel = Buffer.alloc(16);
+      cancel.writeInt32BE(16, 0);
+      cancel.writeInt32BE(80877102, 4);
+      await raw(proxy.port, cancel);
+      await tlsJunk(proxy.port);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const health = await fetch(`http://127.0.0.1:${proxy.healthPort}/health`);
+      assert.equal(health.status, 200);
+      for (const message of crashes) assert.match(message, /reading 'error'/);
+    } finally {
+      process.off("uncaughtException", onCrash);
+      await proxy.close();
+    }
+  });
 });
 
 async function boot(dir: string, body: Record<string, unknown>): Promise<Running> {
@@ -135,6 +160,51 @@ async function plaintext(port: number): Promise<PgError> {
   const payload = await readFrame(socket);
   socket.destroy();
   return mustError(payload);
+}
+
+function raw(port: number, payload: Buffer): Promise<void> {
+  return new Promise((resolve) => {
+    const socket = netConnect({ host: "127.0.0.1", port });
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      socket.destroy();
+      resolve();
+    };
+    socket.on("error", finish);
+    socket.on("connect", () => {
+      socket.write(payload);
+      socket.once("data", finish);
+      socket.once("close", finish);
+      setTimeout(finish, 1000);
+    });
+  });
+}
+
+function tlsJunk(port: number): Promise<void> {
+  return new Promise((resolve) => {
+    const socket = netConnect({ host: "127.0.0.1", port });
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      socket.destroy();
+      resolve();
+    };
+    socket.on("error", finish);
+    socket.on("connect", () => {
+      socket.write(sslRequest());
+      socket.once("data", () => {
+        const secure = tlsConnect({ socket, servername: "db.test", rejectUnauthorized: false });
+        secure.on("error", finish);
+        secure.on("secureConnect", () => {
+          secure.write(Buffer.from("not a postgres message"));
+          setTimeout(finish, 200);
+        });
+      });
+    });
+  });
 }
 
 function mustError(buf: Buffer): PgError {

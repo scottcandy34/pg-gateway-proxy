@@ -1,4 +1,23 @@
-/** 8-byte Postgres SSLRequest: length=8, code=80877103. */
+/** First client packet, before pg-gateway sees it. */
+export type InitialKind = "ssl" | "startup" | "cancel" | "gss" | "garbage" | "short";
+
+const SSL_CODE = 80877103;
+const CANCEL_CODE = 80877102;
+const GSS_CODE = 80877104;
+const PROTOCOL_3 = 0x00030000;
+
+export function classifyInitial(buf: Buffer): InitialKind {
+  if (buf.length < 8) return "short";
+  const length = buf.readInt32BE(0);
+  if (length < 8 || length > 10_000) return "garbage";
+  if (buf.length < length) return "short";
+  const code = buf.readInt32BE(4);
+  if (length === 8 && code === SSL_CODE) return "ssl";
+  if (length === 8 && code === GSS_CODE) return "gss";
+  if (length === 16 && code === CANCEL_CODE) return "cancel";
+  if ((code & 0xffff0000) === PROTOCOL_3) return "startup";
+  return "garbage";
+}
 export function sslRequest(): Buffer {
   const buf = Buffer.alloc(8);
   buf.writeInt32BE(8, 0);

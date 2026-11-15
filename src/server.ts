@@ -9,7 +9,7 @@ import { formatAddress, parseAddress } from "./address.js";
 import { BackendConnectError, connectBackend } from "./backend.js";
 import { fingerprint, loadCertificates, selectCertificate } from "./cert.js";
 import { createLogger, type Logger } from "./log.js";
-import { isSslRequest } from "./protocol.js";
+import { isSslRequest, errorResponse, classifyInitial } from "./protocol.js";
 import { Router, type Match, type Target } from "./router.js";
 import type { Config } from "./types.js";
 
@@ -22,6 +22,7 @@ export type Running = {
 
 export async function startProxy(config: Config, logger?: Logger): Promise<Running> {
   const log = logger ?? createLogger(config.log.level, config.log.format);
+  installStabilityGuard(log);
   const certificates = await loadCertificates(config);
   const caPem = config.tls.clientCert.caPath ? await readFile(config.tls.clientCert.caPath, "utf8") : undefined;
   if (config.tls.clientCert.request && config.tls.clientCert.rejectUnauthorized && !caPem) {
@@ -37,6 +38,32 @@ export async function startProxy(config: Config, logger?: Logger): Promise<Runni
     const material = selectCertificate(certificates, serverName);
     return { key: material.key, cert: material.cert, ca: material.ca, passphrase: material.passphrase };
   };
+
+  async function acceptClient(socket: Socket): Promise<void> {
+    let initial: Buffer;
+    try {
+      initial = await readInitial(socket);
+    } catch {
+      socket.destroy();
+      return;
+    }
+    const kind = classifyInitial(initial);
+    if (kind === "ssl" || kind === "startup") {
+      socket.pause();
+      socket.unshift(initial);
+      await serveTls(socket);
+      return;
+    }
+    if (kind === "cancel") {
+      log.debug("ignored cancel request; it is not forwarded");
+      socket.end();
+      return;
+    }
+    const message = kind === "gss" ? "GSSAPI encryption is not supported" : "expected a PostgreSQL startup message";
+    log.warn("rejected non-postgres client", { kind });
+    if (socket.writable) socket.end(errorResponse("08P01", message));
+    else socket.destroy();
+  }
 
   async function serveTls(socket: Socket): Promise<void> {
     try {
@@ -136,7 +163,7 @@ export async function startProxy(config: Config, logger?: Logger): Promise<Runni
     });
 
     if (!config.plaintext.enabled) {
-      void serveTls(socket);
+      void acceptClient(socket);
       return;
     }
     peekFirstBytes(socket, (ssl) => {
@@ -191,6 +218,31 @@ export async function startProxy(config: Config, logger?: Logger): Promise<Runni
       for (const socket of sockets) socket.destroy();
     },
   };
+}
+
+function readInitial(socket: Socket): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const fail = () => {
+      cleanup();
+      reject(new Error("client closed before a startup message"));
+    };
+    const onData = (chunk: Buffer) => {
+      chunks.push(chunk);
+      const buf = Buffer.concat(chunks);
+      if (classifyInitial(buf) === "short") return;
+      cleanup();
+      resolve(buf);
+    };
+    const cleanup = () => {
+      socket.off("data", onData);
+      socket.off("error", fail);
+      socket.off("close", fail);
+    };
+    socket.on("data", onData);
+    socket.once("error", fail);
+    socket.once("close", fail);
+  });
 }
 
 function peekFirstBytes(socket: Socket, done: (ssl: boolean) => void): void {
@@ -290,6 +342,36 @@ async function rejectClient(connection: PostgresConnection, code: string, messag
 function subjectCn(subject: string): string {
   const match = /(?:^|[\n,])\s*CN=([^,\n]+)/.exec(subject);
   return match?.[1]?.trim() ?? "";
+}
+
+function installStabilityGuard(log: Logger): void {
+  const marker = Symbol.for("pg-gateway-proxy.stability-guard");
+  const proc = process as NodeJS.Process & { [key: symbol]: boolean };
+  if (proc[marker]) return;
+  proc[marker] = true;
+  process.on("uncaughtException", (error) => {
+    if (isStreamCloseBug(error)) {
+      log.debug("ignored a Node stream close error after a client disconnected", { error: error.message });
+      return;
+    }
+    log.error("fatal", { error: error.stack ?? error.message });
+    process.exit(1);
+  });
+  process.on("unhandledRejection", (reason) => {
+    const error = reason instanceof Error ? reason : new Error(String(reason));
+    if (isStreamCloseBug(error) || error.message === "Unexpected initial message") {
+      log.warn("client connection failed", { error: error.message });
+      return;
+    }
+    log.error("unhandled rejection", { error: error.stack ?? error.message });
+  });
+}
+
+function isStreamCloseBug(error: unknown): boolean {
+  if (!(error instanceof TypeError)) return false;
+  if (!error.message.includes("reading 'error'")) return false;
+  const stack = error.stack ?? "";
+  return stack.includes("webstreams/adapters") || stack.includes("AbortError");
 }
 
 function listen(server: Server | HttpServer, host: string, port: number): Promise<void> {
