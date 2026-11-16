@@ -111,7 +111,7 @@ export class Router {
       backends: [spec],
       serverNames: [],
       strategy: "first",
-      tls: "inherit",
+      backendTls: "inherit",
     };
     const captures: Captures = { sni, groups: [sni] };
     if (!looksLikeAddress(spec) && this.servers.has(spec)) {
@@ -119,7 +119,7 @@ export class Router {
       route.backends = [spec];
       const server = this.servers.get(spec)!;
       route.strategy = server.strategy;
-      route.tls = server.tls;
+      route.backendTls = server.tls;
       return {
         route,
         server,
@@ -139,7 +139,7 @@ export class Router {
   }
 
   private resolveTls(route: Route): BackendTls {
-    if (route.tls !== "inherit") return route.tls;
+    if (route.backendTls !== "inherit") return route.backendTls;
     const first = route.serverNames[0];
     if (!first) return { enabled: false, rejectUnauthorized: true };
     return this.servers.get(first)?.tls ?? { enabled: false, rejectUnauthorized: true };

@@ -81,7 +81,7 @@ describe("proxy", () => {
         {
           host: "secure.test",
           backend: `127.0.0.1:${backend.port}`,
-          tls: { enabled: true, rejectUnauthorized: false },
+          backendTls: { enabled: true, rejectUnauthorized: false },
         },
       ],
     });

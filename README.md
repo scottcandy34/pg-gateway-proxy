@@ -159,6 +159,49 @@ psql "host=db1.example.com port=5432 user=postgres dbname=app sslmode=require"
 
 `sslmode=require` encrypts but does not verify the proxy certificate. The default certificate is self-signed, generated on first start at `config/certs/server-cert.pem`. Use `sslmode=verify-full` only after clients trust that cert (or a real one you configured).
 
+## Certificates
+
+This proxy always terminates TLS. The certificate a client checks belongs to the route, under `tls.cert` and `tls.key`, the same keys as [ldap-gateway-proxy](https://github.com/scottcandy34/ldap-gateway-proxy). The hop from this proxy to Postgres is `backendTls`, and it stays plaintext unless you turn that on.
+
+`cert` and `key` under a route's `tls` are the PEM files clients see for that route's hostnames. Same shape as ldap-gateway-proxy. One route can cover several names, and each route can use a different certificate. A route with no `tls` falls back to the global `tls` certificate. `tls.mode: auto` still writes a self-signed fallback. `tls.mode: files` uses the global files, or starts with only the route certificates if every name you serve has its own.
+
+The hop from this proxy to Postgres is `backendTls`, not `tls`. It is plaintext unless you set `backendTls: true`.
+
+[npm-cert-share](https://github.com/scottcandy34/npm-cert-share) is one way to get those files. It copies Nginx Proxy Manager certificates into one folder per domain, without the renewal number:
+
+```text
+/certs/db.example.com/fullchain.pem
+/certs/db.example.com/privkey.pem
+```
+
+A wildcard `*.example.com` is the folder `_.example.com`. Mount the npm-cert-share output read-only:
+
+```yaml
+volumes:
+  - ./config:/config
+  - /path/to/npm-cert-share/certs:/certs:ro
+```
+
+```yaml
+tls:
+  mode: files
+
+routes:
+  - host: db.example.com
+    backend: "10.0.0.10:5432"
+    tls:
+      cert: /certs/db.example.com/fullchain.pem
+      key: /certs/db.example.com/privkey.pem
+
+  - host: "*.example.com"
+    backend: "$1.postgres.internal:5432"
+    tls:
+      cert: /certs/_.example.com/fullchain.pem
+      key: /certs/_.example.com/privkey.pem
+```
+
+The files are read when the process starts. After npm-cert-share writes a renewal, recreate this container.
+
 Connecting to the raw IP, or with a driver that omits SNI, is rejected:
 
 ```text
@@ -211,8 +254,8 @@ tls:
 
 The backend sees the proxy, not the original client address.
 
-- Route `tls: false` (the default): the hop after the proxy is plaintext. `pg_hba.conf` needs a `host` line for the proxy's network, not only `hostssl`.
-- Route `tls: true`: the proxy does a real Postgres SSL handshake to the backend. Use `hostssl`, and give the proxy the backend CA if you want the certificate checked.
+- `backendTls: false` (the default): the hop after the proxy is plaintext. `pg_hba.conf` needs a `host` line for the proxy's network, not only `hostssl`.
+- `backendTls: true`: the proxy does a real Postgres SSL handshake to the backend. Use `hostssl`, and give the proxy the backend CA if you want the certificate checked.
 
 ```text
 host    all all 172.16.0.0/12 scram-sha-256

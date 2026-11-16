@@ -171,7 +171,7 @@ function parseRoutes(raw: unknown, servers: ServerDef[]): Route[] {
   return raw.map((entry, index) => {
     const path = `routes[${index}]`;
     const doc = object(entry, path);
-    assertKeys(doc, ["name", "host", "backend", "strategy", "tls", "connectTimeout"], path);
+    assertKeys(doc, ["name", "host", "backend", "strategy", "tls", "backendTls", "connectTimeout"], path);
     const hosts = asList(doc.host, `${path}.host`);
     if (hosts.length === 0) throw new Error(`${path}.host is required`);
     const backends = asList(doc.backend, `${path}.backend`);
@@ -191,17 +191,33 @@ function parseRoutes(raw: unknown, servers: ServerDef[]): Route[] {
     if (!strategy && named && backends.length === 1) {
       strategy = servers.find((server) => server.name === backends[0])?.strategy;
     }
-    const tls: Route["tls"] = doc.tls === undefined ? "inherit" : parseBackendTls(doc.tls, `${path}.tls`);
+    const certificate = parseRouteCertificate(doc.tls, `${path}.tls`);
+    const backendTls: Route["backendTls"] = doc.backendTls === undefined ? "inherit" : parseBackendTls(doc.backendTls, `${path}.backendTls`);
     return {
       name,
       hosts,
       backends,
       serverNames: named ? backends : [],
       strategy: strategy ?? "first",
-      tls,
+      backendTls,
       connectTimeoutMs: doc.connectTimeout === undefined ? undefined : parseDuration(doc.connectTimeout, `${path}.connectTimeout`),
+      cert: certificate.cert,
+      key: certificate.key,
     };
   });
+}
+
+function parseRouteCertificate(raw: unknown, path: string): { cert?: string; key?: string } {
+  if (raw === undefined) return {};
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error(`${path} is the certificate clients see, same as ldap-gateway-proxy. Set cert and key. Use backendTls for the hop to Postgres`);
+  }
+  const doc = raw as Record<string, unknown>;
+  assertKeys(doc, ["cert", "key"], path);
+  const cert = optionalString(doc.cert, `${path}.cert`);
+  const key = optionalString(doc.key, `${path}.key`);
+  if ((cert && !key) || (!cert && key)) throw new Error(`${path} cert and key must be set together`);
+  return { cert, key };
 }
 
 function parseBackendTls(raw: unknown, path: string): BackendTls {

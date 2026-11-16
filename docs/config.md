@@ -129,11 +129,26 @@ tls:
       cert: /config/certs/wildcard.crt
 ```
 
-`mode: auto` (the default) writes a self-signed certificate the first time the key and cert files are missing. Files already there are kept, so restarts do not rotate the cert. SANs include `localhost`, `*.localhost`, and every exact or single-wildcard route host.
+`mode: auto` (the default) writes a self-signed certificate the first time the key and cert files are missing. Files already there are kept, so restarts do not rotate the cert. SANs include `localhost`, `*.localhost`, and every exact or single-wildcard route host. That certificate is the fallback for a route that does not set its own.
 
-`mode: files` requires `key` and `cert` and will not generate anything.
+`mode: files` uses `key` and `cert` when they are set. It does not generate anything. If they are omitted, every route you want to serve needs its own `cert` and `key`.
 
-`certificates` is a first-match SNI list. A name that matches nothing falls back to `key` / `cert`. Patterns are the same as route hosts (`*`, `*.example.com`).
+Put the certificate clients see on the route. A name is matched against the route's `host` patterns, and that route's files are presented. Route files win over this global block.
+
+```yaml
+routes:
+  - host: db.example.com
+    backend: "10.0.0.10:5432"
+    tls:
+      cert: /certs/db.example.com/fullchain.pem
+      key: /certs/db.example.com/privkey.pem
+```
+
+[npm-cert-share](https://github.com/scottcandy34/npm-cert-share) writes those files from Nginx Proxy Manager. Mount its output at `/certs`. A wildcard name is the folder `_.example.com`. The process reads the files at startup, so recreate the container after a renewal.
+
+`certificates` is an older global SNI list. A route's `tls.cert` and `tls.key` are checked first. A name that matches neither falls back to the global `key` / `cert`. Patterns are the same as route hosts (`*`, `*.example.com`).
+
+`cert` and `key` inside `backendTls` are not the certificate clients see. Those are an optional client certificate offered to Postgres.
 
 Client certificates are optional and checked before the connection is handed to the backend:
 
@@ -160,7 +175,7 @@ servers:
 
 A string is shorthand for one plaintext address and strategy `first`.
 
-`tls` on a server is the default for routes that point at it and do not set their own `tls`.
+`tls` on a server is the default `backendTls` for routes that point at it and do not set their own.
 
 ## `routes`
 
@@ -177,7 +192,7 @@ routes:
     backend: "$1.postgres.internal:5432"
     strategy: first
     connectTimeout: 3s
-    tls: false
+    backendTls: false
 
   - name: reports
     host:
@@ -187,7 +202,7 @@ routes:
       - 10.0.2.10:5432
       - 10.0.2.11:5432
     strategy: least-connections
-    tls:
+    backendTls:
       enabled: true
       rejectUnauthorized: true
       servername: analytics.internal
@@ -240,7 +255,7 @@ Used when a route has more than one address. The proxy tries the next address if
 
 A route with one named server and no `strategy` of its own uses that server's strategy. Otherwise the default is `first`. Set `strategy` on the route to override it.
 
-### `tls` (backend)
+### `backendTls`
 
 | Value | Meaning |
 |---|---|
@@ -250,7 +265,7 @@ A route with one named server and no `strategy` of its own uses that server's st
 | a mapping | same as `true`, with the fields below |
 
 ```yaml
-tls:
+backendTls:
   enabled: true
   rejectUnauthorized: true
   servername: db1.internal   # SNI toward the backend, if its cert name differs
@@ -293,13 +308,13 @@ A transparent proxy also cannot rewrite the database name. Use a hostname per se
 
 The backend sees the proxy's source address, not the original client, unless you terminate somewhere else.
 
-Plaintext hop (`tls: false`):
+Plaintext hop (`backendTls: false`):
 
 ```text
 host all all 172.16.0.0/12 scram-sha-256
 ```
 
-TLS hop (`tls: true` or a mapping):
+TLS hop (`backendTls: true` or a mapping):
 
 ```text
 hostssl all all 172.16.0.0/12 scram-sha-256
