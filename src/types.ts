@@ -34,8 +34,12 @@ export type Route = {
   /** Set when every backend entry is a named server rather than an address. */
   serverNames: string[];
   strategy: Strategy;
-  tls: RouteTls;
+  /** How this proxy connects to Postgres. `inherit` uses the named server. */
+  backendTls: RouteTls;
   connectTimeoutMs?: number;
+  /** PEM files presented to clients whose SNI matches this route. Both or neither. */
+  cert?: string;
+  key?: string;
 };
 
 export type ClientCert = {

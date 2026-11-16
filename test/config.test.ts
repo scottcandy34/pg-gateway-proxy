@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
+import { loadCertificates, selectCertificate } from "../src/cert.js";
 import { loadOrCreate, parseConfig } from "../src/config.js";
 
 describe("config", () => {
@@ -40,6 +41,35 @@ describe("config", () => {
           "c.yml",
         ),
       /mix/,
+    );
+  });
+
+  it("gives each route its own certificate", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "pg-proxy-certs-"));
+    await writeFile(path.join(dir, "db.pem"), "DB");
+    await writeFile(path.join(dir, "db.key"), "DBKEY");
+    await writeFile(path.join(dir, "auth.pem"), "AUTH");
+    await writeFile(path.join(dir, "auth.key"), "AUTHKEY");
+    await writeFile(path.join(dir, "fallback.pem"), "FALLBACK");
+    await writeFile(path.join(dir, "fallback.key"), "FALLBACKKEY");
+    const config = parseConfig(
+      {
+        tls: { mode: "files", cert: path.join(dir, "fallback.pem"), key: path.join(dir, "fallback.key") },
+        routes: [
+          { host: "db.example.com", backend: "10.0.0.1:5432", tls: { cert: path.join(dir, "db.pem"), key: path.join(dir, "db.key") } },
+          { host: "*.auth.example.com", backend: "10.0.0.2:5432", tls: { cert: path.join(dir, "auth.pem"), key: path.join(dir, "auth.key") } },
+          { host: "plain.example.com", backend: "10.0.0.3:5432" },
+        ],
+      },
+      path.join(dir, "config.yml"),
+    );
+    const certificates = await loadCertificates(config);
+    assert.equal(selectCertificate(certificates, "db.example.com").certPem, "DB");
+    assert.equal(selectCertificate(certificates, "one.auth.example.com").certPem, "AUTH");
+    assert.equal(selectCertificate(certificates, "plain.example.com").certPem, "FALLBACK");
+    assert.throws(
+      () => parseConfig({ routes: [{ host: "db.example.com", backend: "10.0.0.1:5432", tls: { cert: "only.pem" } }] }, "c.yml"),
+      /cert and key/,
     );
   });
 });

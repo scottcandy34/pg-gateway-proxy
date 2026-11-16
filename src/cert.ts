@@ -16,12 +16,16 @@ export type CertificateSet = {
 export async function loadCertificates(config: Config): Promise<CertificateSet> {
   const dir = path.join(path.dirname(config.configPath), "certs");
   let files = config.tls.files;
+  const routeFiles = config.routes.filter((route) => route.cert && route.key);
   if (files.length === 0) {
-    if (config.tls.mode !== "auto") throw new Error("tls.mode files requires tls.key and tls.cert");
-    const keyPath = path.join(dir, "server-key.pem");
-    const certPath = path.join(dir, "server-cert.pem");
-    await ensureAutoCert(keyPath, certPath, sanList(config));
-    files = [{ keyPath, certPath }];
+    if (config.tls.mode === "auto") {
+      const keyPath = path.join(dir, "server-key.pem");
+      const certPath = path.join(dir, "server-cert.pem");
+      await ensureAutoCert(keyPath, certPath, sanList(config));
+      files = [{ keyPath, certPath }];
+    } else if (routeFiles.length === 0) {
+      throw new Error("tls.mode files requires tls.key and tls.cert, or cert and key on each route");
+    }
   } else if (config.tls.mode === "auto") {
     const fallback = files.find((file) => !file.serverName);
     if (fallback) await ensureAutoCert(fallback.keyPath, fallback.certPath, sanList(config));
@@ -34,9 +38,15 @@ export async function loadCertificates(config: Config): Promise<CertificateSet> 
     if (file.serverName) named.push({ serverName: file.serverName, material });
     else fallback ??= material;
   }
+  const routeNamed: CertificateSet["named"] = [];
+  for (const route of routeFiles) {
+    const material = await readMaterial({ keyPath: route.key!, certPath: route.cert! });
+    for (const host of route.hosts) routeNamed.push({ serverName: host, material });
+    fallback ??= material;
+  }
   if (!fallback) fallback = named[0]?.material;
   if (!fallback) throw new Error("no TLS certificate is configured");
-  return { fallback, named };
+  return { fallback, named: [...routeNamed, ...named] };
 }
 
 export function selectCertificate(set: CertificateSet, serverName: string | undefined): LoadedMaterial {

@@ -40,7 +40,11 @@ plaintext:
   backend: 127.0.0.1:5432
 
 # auto writes a self-signed cert into <config-dir>/certs the first time
-# key/cert are missing. Use "files" and set key/cert for a real certificate.
+# key/cert are missing. That cert is only the fallback.
+# Put tls.cert and tls.key on a route to present a different certificate per domain.
+# Same keys as ldap-gateway-proxy. backendTls is the hop to Postgres.
+# npm-cert-share writes those as /certs/<domain>/fullchain.pem and privkey.pem.
+# https://github.com/scottcandy34/npm-cert-share
 tls:
   mode: auto
   # key: /config/certs/server-key.pem
@@ -75,7 +79,10 @@ routes: []
   # - name: tenant
   #   host: "*.db.example.com"
   #   backend: "$1.postgres.internal:5432"
-  #   tls: false
+  #   backendTls: false
+  #   tls:
+  #     cert: /certs/_.db.example.com/fullchain.pem
+  #     key: /certs/_.db.example.com/privkey.pem
   #
   # - name: analytics
   #   host:
@@ -86,7 +93,7 @@ routes: []
   #     - 10.0.2.11:5432
   #   strategy: least-connections
   #   connectTimeout: 3s
-  #   tls:
+  #   backendTls:
   #     enabled: true
   #     rejectUnauthorized: true
   #     servername: analytics.internal

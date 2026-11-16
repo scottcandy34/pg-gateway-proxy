@@ -47,7 +47,7 @@ async function upgradeBackendTls(socket: Socket, address: Address, tls: BackendT
   socket.write(sslRequest());
   const answer = await readByte(socket, timeoutMs, address);
   if (answer === 0x4e) {
-    throw new BackendConnectError(`${formatAddress(address)} refused SSL (answered N). Set this route's tls: false, or enable SSL on the backend.`);
+    throw new BackendConnectError(`${formatAddress(address)} refused SSL (answered N). Set this route's backendTls: false, or enable SSL on the backend.`);
   }
   if (answer !== 0x53) {
     throw new BackendConnectError(`${formatAddress(address)} sent ${answer} instead of accepting SSL`);

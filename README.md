@@ -19,7 +19,7 @@ You run the image GitHub Actions publishes to GHCR. You do not need the source o
 | Registry | `ghcr.io` |
 | Image | `ghcr.io/scottcandy34/pg-gateway-proxy` |
 | Platforms | `linux/amd64`, `linux/arm64` |
-| Tags | `v0.1.2` (this release), `0.1.2`, the `v0.1` line, and `latest` |
+| Tags | `v0.1.3` (this release), `0.1.3`, the `v0.1` line, and `latest` |
 
 That name comes from the GitHub repo [scottcandy34/pg-gateway-proxy](https://github.com/scottcandy34/pg-gateway-proxy). GHCR wants the owner and repo in lowercase. The workflow lowercases them for you.
 
@@ -35,14 +35,14 @@ docker login ghcr.io -u scottcandy34
 After that:
 
 ```bash
-docker pull ghcr.io/scottcandy34/pg-gateway-proxy:v0.1.2
+docker pull ghcr.io/scottcandy34/pg-gateway-proxy:v0.1.3
 ```
 
-`latest` moves when a newer version is published. `v0.1.2` does not. Pin the version.
+`latest` moves when a newer version is published. `v0.1.3` does not. Pin the version.
 
 ## Versions
 
-The image version is the `version` in [package.json](package.json). This release is **v0.1.2**. Major stays `0` until a breaking change.
+The image version is the `version` in [package.json](package.json). This release is **v0.1.3**. Major stays `0` until a breaking change.
 
 A push to `main` publishes `v<version>` only when that version has not already been published from another commit. The next change has to bump it first, or the Docker build stops:
 
@@ -95,7 +95,7 @@ An empty `./config` mount is enough. The container writes `config.yml` and, beca
 
 ## Run the published image
 
-[`docker-compose.yml`](docker-compose.yml) already points at `ghcr.io/scottcandy34/pg-gateway-proxy:v0.1.2`. Then:
+[`docker-compose.yml`](docker-compose.yml) already points at `ghcr.io/scottcandy34/pg-gateway-proxy:v0.1.3`. Then:
 
 ```bash
 docker compose up -d
@@ -118,7 +118,7 @@ docker run -d \
   -e CONFIG_PATH=/config/config.yml \
   -e LOG_LEVEL=info \
   -v "$PWD/config:/config" \
-  ghcr.io/scottcandy34/pg-gateway-proxy:v0.1.2
+  ghcr.io/scottcandy34/pg-gateway-proxy:v0.1.3
 ```
 
 Watch the first start:
@@ -135,7 +135,7 @@ A named volume works too if you do not want the file on the host. You then copy 
 docker volume create pg-gateway-config
 docker run -d --name pg-gateway-proxy --restart unless-stopped \
   -p 5432:5432 -v pg-gateway-config:/config \
-  ghcr.io/scottcandy34/pg-gateway-proxy:v0.1.2
+  ghcr.io/scottcandy34/pg-gateway-proxy:v0.1.3
 docker cp pg-gateway-proxy:/config/config.yml ./config.yml
 # edit config.yml
 docker cp ./config.yml pg-gateway-proxy:/config/config.yml
@@ -158,6 +158,49 @@ psql "host=db1.example.com port=5432 user=postgres dbname=app sslmode=require"
 ```
 
 `sslmode=require` encrypts but does not verify the proxy certificate. The default certificate is self-signed, generated on first start at `config/certs/server-cert.pem`. Use `sslmode=verify-full` only after clients trust that cert (or a real one you configured).
+
+## Certificates
+
+This proxy always terminates TLS. The certificate a client checks belongs to the route, under `tls.cert` and `tls.key`, the same keys as [ldap-gateway-proxy](https://github.com/scottcandy34/ldap-gateway-proxy). The hop from this proxy to Postgres is `backendTls`, and it stays plaintext unless you turn that on.
+
+`cert` and `key` under a route's `tls` are the PEM files clients see for that route's hostnames. Same shape as ldap-gateway-proxy. One route can cover several names, and each route can use a different certificate. A route with no `tls` falls back to the global `tls` certificate. `tls.mode: auto` still writes a self-signed fallback. `tls.mode: files` uses the global files, or starts with only the route certificates if every name you serve has its own.
+
+The hop from this proxy to Postgres is `backendTls`, not `tls`. It is plaintext unless you set `backendTls: true`.
+
+[npm-cert-share](https://github.com/scottcandy34/npm-cert-share) is one way to get those files. It copies Nginx Proxy Manager certificates into one folder per domain, without the renewal number:
+
+```text
+/certs/db.example.com/fullchain.pem
+/certs/db.example.com/privkey.pem
+```
+
+A wildcard `*.example.com` is the folder `_.example.com`. Mount the npm-cert-share output read-only:
+
+```yaml
+volumes:
+  - ./config:/config
+  - /path/to/npm-cert-share/certs:/certs:ro
+```
+
+```yaml
+tls:
+  mode: files
+
+routes:
+  - host: db.example.com
+    backend: "10.0.0.10:5432"
+    tls:
+      cert: /certs/db.example.com/fullchain.pem
+      key: /certs/db.example.com/privkey.pem
+
+  - host: "*.example.com"
+    backend: "$1.postgres.internal:5432"
+    tls:
+      cert: /certs/_.example.com/fullchain.pem
+      key: /certs/_.example.com/privkey.pem
+```
+
+The files are read when the process starts. After npm-cert-share writes a renewal, recreate this container.
 
 Connecting to the raw IP, or with a driver that omits SNI, is rejected:
 
@@ -211,8 +254,8 @@ tls:
 
 The backend sees the proxy, not the original client address.
 
-- Route `tls: false` (the default): the hop after the proxy is plaintext. `pg_hba.conf` needs a `host` line for the proxy's network, not only `hostssl`.
-- Route `tls: true`: the proxy does a real Postgres SSL handshake to the backend. Use `hostssl`, and give the proxy the backend CA if you want the certificate checked.
+- `backendTls: false` (the default): the hop after the proxy is plaintext. `pg_hba.conf` needs a `host` line for the proxy's network, not only `hostssl`.
+- `backendTls: true`: the proxy does a real Postgres SSL handshake to the backend. Use `hostssl`, and give the proxy the backend CA if you want the certificate checked.
 
 ```text
 host    all all 172.16.0.0/12 scram-sha-256
